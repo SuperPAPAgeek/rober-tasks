@@ -148,6 +148,7 @@ select:focus{border-color:var(--border2)}
           <option value="ReelHungry">ReelHungry</option>
           <option value="H3.0">H3.0</option>
           <option value="Personal">Personal</option>
+          <option value="Rugby Dominance">Rugby Dominance</option>
         </select>
         <select id="sub-sel" style="display:none"></select>
         <select id="day-sel">
@@ -169,6 +170,7 @@ select:focus{border-color:var(--border2)}
     <div id="view-reelhungry" class="view"></div>
     <div id="view-h3" class="view"></div>
     <div id="view-personal" class="view"></div>
+    <div id="view-rugby" class="view"></div>
     <div id="view-backlog" class="view"></div>
   </main>
 </div>
@@ -197,7 +199,8 @@ const PROJ = {
   Banakey:    {color:'var(--banakey)',    bg:'var(--banakey-bg)',    key:'banakey'},
   ReelHungry: {color:'var(--reel)',       bg:'var(--reel-bg)',       key:'reelhungry'},
   'H3.0':     {color:'var(--h3)',         bg:'var(--h3-bg)',         key:'h3'},
-  Personal:   {color:'var(--personal)',   bg:'var(--personal-bg)',   key:'personal'}
+  Personal:   {color:'var(--personal)',   bg:'var(--personal-bg)',   key:'personal'},
+  'Rugby Dominance': {color:'#ef4444',    bg:'rgba(239,68,68,0.12)', key:'rugby'}
 };
 const DAY_LBL = {hoy:'Hoy',L:'Lun',M:'Mar',X:'Mié',J:'Jue',V:'Vie',S:'Sáb',D:'Dom',backlog:'Backlog'};
 
@@ -205,6 +208,9 @@ let tasks = [];
 let subprojects = [];
 let activeView = 'hoy';
 let blFilter = 'all';
+let rugbyWorkouts = [];
+let dailyTracking = [];
+let mondayReviews = [];
 
 async function api(method, table, body, params=''){
   const url = `${SUPA_URL}/rest/v1/${table}${params}`;
@@ -225,12 +231,18 @@ async function api(method, table, body, params=''){
 }
 
 async function loadAll(){
-  [tasks, subprojects] = await Promise.all([
+  [tasks, subprojects, rugbyWorkouts, dailyTracking, mondayReviews] = await Promise.all([
     api('GET','tasks','','?order=created_at.desc'),
-    api('GET','subprojects','','?order=name.asc')
+    api('GET','subprojects','','?order=name.asc'),
+    api('GET','rugby_workouts','','?order=block.asc,week.asc,day_of_week.asc,exercise_order.asc'),
+    api('GET','daily_tracking','','?order=tracking_date.desc'),
+    api('GET','monday_reviews','','?order=review_date.desc')
   ]);
   tasks = tasks || [];
   subprojects = subprojects || [];
+  rugbyWorkouts = rugbyWorkouts || [];
+  dailyTracking = dailyTracking || [];
+  mondayReviews = mondayReviews || [];
   renderSidebar();
   render();
 }
@@ -520,6 +532,117 @@ function renderBlContent(){
 
 function setBlFilter(f){ blFilter=f; renderBacklog(); }
 
+function renderRugby(){
+  const hoy = new Date().toISOString().split('T')[0];
+  const today = dailyTracking.find(d => d.tracking_date === hoy) || {};
+  
+  // Agrupar workouts por semana y día
+  const byWeek = {};
+  rugbyWorkouts.forEach(w => {
+    const key = `Sem ${w.week} (Block ${w.block})`;
+    if(!byWeek[key]) byWeek[key] = {};
+    if(!byWeek[key][w.day_of_week]) byWeek[key][w.day_of_week] = [];
+    byWeek[key][w.day_of_week].push(w);
+  });
+
+  let html = `
+    <div class="proj-head" style="margin-bottom:20px">
+      <div class="proj-dot-lg" style="background:#ef4444;width:13px;height:13px;border-radius:50%"></div>
+      <span class="proj-nm">Rugby Dominance 2026</span>
+    </div>
+    
+    <div class="stats" style="margin-bottom:24px">
+      <div class="stat">
+        <div class="stat-n">${today.protein_consumed_g || 0}</div>
+        <div class="stat-l">Proteína hoy (g)</div>
+      </div>
+      <div class="stat">
+        <div class="stat-n">195</div>
+        <div class="stat-l">Objetivo (g)</div>
+      </div>
+      <div class="stat">
+        <div class="stat-n">${Math.round((today.protein_consumed_g || 0) / 195 * 100)}%</div>
+        <div class="stat-l">Progreso</div>
+      </div>
+      <div class="stat">
+        <div class="stat-n">${rugbyWorkouts.filter(w => w.completed).length}</div>
+        <div class="stat-l">Entrenamientos ✓</div>
+      </div>
+    </div>
+
+    <div class="sec-head" style="margin-bottom:12px">
+      <span class="sec-title">TRACKING PROTEÍNA HOY</span>
+    </div>
+    <div class="capture" style="margin-bottom:24px">
+      <input type="number" id="protein-input" placeholder="Gramos de proteína consumidos" value="${today.protein_consumed_g || ''}" min="0" max="300" style="background:var(--surface2);border:1px solid var(--border);border-radius:6px;color:var(--text);font-family:'DM Sans',sans-serif;font-size:14px;padding:9px 12px;outline:none;width:100%;margin-bottom:8px"/>
+      <button class="add-btn" onclick="saveProteinToday()" style="width:100%;margin-left:0">Guardar Proteína</button>
+    </div>
+
+    <div class="sec-head" style="margin-bottom:12px">
+      <span class="sec-title">ENTRENAMIENTOS POR SEMANA</span>
+    </div>`;
+
+  Object.keys(byWeek).sort().forEach(week => {
+    const days = byWeek[week];
+    html += `<div class="proj-group">
+      <div class="proj-head">
+        <span class="proj-nm" style="font-size:13px">${week}</span>
+      </div>`;
+      
+    ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'].forEach(day => {
+      if(!days[day]) return;
+      const exercises = days[day];
+      const completed = exercises.filter(e => e.completed).length;
+      html += `<div style="margin-bottom:12px;padding:12px;background:var(--surface2);border-radius:var(--r);border:1px solid var(--border)">
+        <div style="font-size:12px;font-weight:600;margin-bottom:8px;color:var(--muted2)">${day}</div>
+        <div style="font-size:13px;margin-bottom:8px;color:var(--muted)">${exercises[0].session_name}</div>`;
+      
+      exercises.forEach((ex, idx) => {
+        html += `<div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;font-size:12px;padding:6px 0">
+          <input type="checkbox" ${ex.completed ? 'checked' : ''} onchange="toggleWorkout(${ex.id}, this.checked)" style="cursor:pointer;width:16px;height:16px"/>
+          <span style="flex:1;${ex.completed ? 'opacity:.5;text-decoration:line-through' : ''}">${ex.exercise_name} ${ex.sets}x${ex.reps}${ex.load_kg ? ` @ ${ex.load_kg}kg` : ''}</span>
+        </div>`;
+      });
+      
+      html += `<div style="font-size:11px;color:var(--muted);margin-top:6px">${completed}/${exercises.length} ✓</div>
+      </div>`;
+    });
+    
+    html += `</div>`;
+  });
+
+  if(!rugbyWorkouts.length) {
+    html += '<div class="empty">No hay entrenamientos cargados</div>';
+  }
+
+  document.getElementById('view-rugby').innerHTML = html;
+}
+
+async function saveProteinToday(){
+  const hoy = new Date().toISOString().split('T')[0];
+  const proteinVal = parseInt(document.getElementById('protein-input').value) || 0;
+  
+  const existing = dailyTracking.find(d => d.tracking_date === hoy);
+  
+  if(existing) {
+    await api('PATCH', 'daily_tracking', {protein_consumed_g: proteinVal}, `?tracking_date=eq.${hoy}`);
+  } else {
+    await api('POST', 'daily_tracking', {
+      tracking_date: hoy,
+      protein_target_g: 195,
+      protein_consumed_g: proteinVal,
+      calories_target: 2500
+    });
+  }
+  
+  await loadAll();
+}
+
+async function toggleWorkout(id, completed){
+  await api('PATCH', 'rugby_workouts', {completed}, `?id=eq.${id}`);
+  await loadAll();
+}
+
 function render(){
   if(activeView==='hoy') renderHoy();
   else if(activeView==='semana') renderSemana();
@@ -528,6 +651,7 @@ function render(){
   else if(activeView==='reelhungry') renderProjView('ReelHungry','reelhungry');
   else if(activeView==='h3') renderProjView('H3.0','h3');
   else if(activeView==='personal') renderProjView('Personal','personal');
+  else if(activeView==='rugby') renderRugby();
   else if(activeView.startsWith('sub_')){
     const id = activeView.replace('sub_','');
     const sub = subprojects.find(s=>s.id===id);
